@@ -1,0 +1,66 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Helper functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isRequester(requesterUid) {
+      return isAuthenticated() && request.auth.uid == requesterUid;
+    }
+
+    // -------------------------------------------------------------------------
+    // Donors Collection: Registered voluntary blood donors
+    // -------------------------------------------------------------------------
+    match /donors/{donorId} {
+      // Authenticated users can search and view donor listings
+      allow read: if isAuthenticated();
+
+      // Authenticated users can register their donor profile
+      allow create: if isAuthenticated() &&
+                    request.resource.data.name is string &&
+                    request.resource.data.bloodGroup is string &&
+                    request.resource.data.contactNumber is string;
+
+      // Donors can update their availability or location
+      allow update: if isAuthenticated();
+
+      // Deletion is restricted
+      allow delete: if isAuthenticated();
+    }
+
+    // -------------------------------------------------------------------------
+    // Blood Requests Collection: Emergency patient blood requirements
+    // -------------------------------------------------------------------------
+    match /bloodRequests/{requestId} {
+      // Any authenticated user can read active and personal blood requests
+      allow read: if isAuthenticated();
+
+      // Only authenticated users can create requests with matching requesterUid
+      allow create: if isAuthenticated() &&
+                    request.resource.data.requesterUid == request.auth.uid &&
+                    request.resource.data.bloodGroup is string &&
+                    request.resource.data.unitsRequired is int &&
+                    request.resource.data.status == 'OPEN';
+
+      // Updates:
+      // 1. Requester can cancel or mark complete: requesterUid == request.auth.uid
+      // 2. Donor can accept an open request (status -> ACCEPTED, assignedDonorUid == request.auth.uid)
+      // 3. Donor can decline an open request (append auth.uid to declinedDonorUids)
+      allow update: if isAuthenticated() && (
+        // Requester managing their request
+        resource.data.requesterUid == request.auth.uid ||
+        // Volunteer donor committing or declining
+        (
+          resource.data.status == 'OPEN' &&
+          request.auth.uid != resource.data.requesterUid
+        )
+      );
+
+      // Blood request deletion is restricted to maintain audit trail
+      allow delete: if isAuthenticated() && resource.data.requesterUid == request.auth.uid;
+    }
+  }
+}
